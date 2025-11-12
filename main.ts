@@ -11,12 +11,6 @@ export default class InputViewPlugin extends Plugin {
                 return new InputBasesView(controller, containerEl);
             },
         });
-        
-        // Optional: Add styles for the input view
-        // You may want to add a styles.css file with:
-        // .input-view-table { width: 100%; border-collapse: collapse; }
-        // .input-view-table th, .input-view-table td { border: 1px solid var(--background-modifier-border); padding: 8px; }
-        // .input-view-cell-input { width: 100%; box-sizing: border-box; }
     }
 }
 
@@ -30,23 +24,19 @@ class InputBasesView extends BasesView {
     }
 
     public onOpen(): void {
-        // Render will happen in onDataUpdated when data is available
         this.containerEl.empty();
         this.containerEl.createDiv({ text: 'Loading...' });
     }
 
     public onClose(): void {
-        // Clean up DOM
         this.containerEl.empty();
     }
 
     public onDataUpdated(): void {
-        // Access data from the inherited property
         const data = this.data;
         const config = this.config;
-        const app = this.app;
+        const controller = (this as any).controller;
 
-        // Clear and rebuild table
         this.containerEl.empty();
 
         if (!data || !config) {
@@ -54,23 +44,42 @@ class InputBasesView extends BasesView {
             return;
         }
 
-        // Extract entries from data
-        const entries: any[] = this.normalizeEntries(data);
+        const entries: any[] = data?.data;
         
         if (!entries || !entries.length) {
             this.containerEl.createDiv({ text: 'No files in this base.' });
             return;
         }
-        
+
         const files: any[] = entries.map((entry: any) => entry?.file).filter(Boolean);
 
-        if (!files.length) {
-            this.containerEl.createDiv({ text: 'No files in this base.' });
-            return;
+        // Collect properties: prefer config order; fallback to frontmatter keys
+        let properties: string[] = [];
+        try {
+            const order = config?.getOrder?.();
+            if (Array.isArray(order) && order.length) {
+                properties = order
+                    .map((p: any) => (typeof p === 'string' ? p : String(p)))
+                    .filter(Boolean);
+            } else {
+                const unique = new Set<string>();
+                const metadataCache = (this.app as any)?.metadataCache;
+                for (const entry of entries) {
+                    const file = entry?.file;
+                    const fm = metadataCache?.getFileCache?.(file)?.frontmatter;
+                    if (fm && typeof fm === 'object') {
+                        for (const key of Object.keys(fm)) {
+                            // Skip positional metadata object
+                            if (key === 'position') continue;
+                            unique.add(`note.${key}`);
+                        }
+                    }
+                }
+                properties = Array.from(unique);
+            }
+        } catch {
+            properties = [];
         }
-
-        // Get property list
-        const properties: string[] = this.getProperties(entries, config);
 
         if (!properties.length) {
             const hint = this.containerEl.createDiv();
@@ -79,155 +88,59 @@ class InputBasesView extends BasesView {
             return;
         }
 
-        // Detect property types
-        const propertyMetadata = this.detectPropertyTypes(properties, entries);
-
         // Build table
         const table = this.containerEl.createEl('table', { cls: 'input-view-table' });
-        const thead = table.createEl('thead');
-        const headRow = thead.createEl('tr');
-        headRow.createEl('th', { text: 'Property' });
-
-        // Add column headers (file names)
-        for (const file of files) {
-            const name = file?.basename ?? file?.name ?? file?.title ?? file?.path ?? 'File';
-            headRow.createEl('th', { text: String(name) });
-        }
-
         const tbody = table.createEl('tbody');
 
         // Create rows for each property
         for (const propertyId of properties) {
             const row = tbody.createEl('tr');
-            // Get display name from config, fallback to property ID
-            const display = config?.getDisplayName ? config.getDisplayName(propertyId as any) : propertyId;
-            row.createEl('th', { text: display });
+            
+            // First column: property name label
+            const display = config?.getDisplayName?.(propertyId as `note.${string}` | `formula.${string}` | `file.${string}`) ?? propertyId;
+            const labelCell = row.createEl('td', { cls: 'input-view-property-label' });
+            labelCell.createEl('strong', { text: display });
 
-            const isComputed = this.isComputedProperty(propertyId);
-            const metadata = propertyMetadata.get(propertyId);
+            const isComputed = propertyId.startsWith('file.') || propertyId.startsWith('formula.');
 
-            // Create cells for each file
+            // Subsequent columns: one cell per file
             for (const entry of entries) {
-                const cell = row.createEl('td');
-                const raw = this.getValueFor(entry, propertyId, app);
+                const cell = row.createEl('td', { cls: 'input-view-cell' });
                 
                 if (isComputed) {
-                    // Read-only cell
-                    cell.createEl('span', { text: raw ?? '' });
+                    // Read-only cell for computed properties
+                    const value = this.getValueFor(entry, propertyId);
+                    cell.createEl('span', { text: value, cls: 'input-view-readonly' });
                 } else {
-                    // Editable input
-                    this.createInputCell(cell, entry, propertyId, raw, metadata, app, config);
+                    // Editable cell using Obsidian's property widget
+                    this.renderPropertyWidget(cell, entry, propertyId, controller);
                 }
             }
         }
     }
 
-    private normalizeEntries(data: any): any[] {
-        // data should have a .data property that contains the array of entries
-        const entries = data?.data;
-        
-        if (!entries) {
-            return [];
-        }
-        
-        if (!Array.isArray(entries)) {
-            return [];
-        }
-        
-        return entries;
-    }
-
-    private getProperties(entries: any[], config: any): string[] {
+    private renderPropertyWidget(cell: HTMLElement, entry: any, propertyId: string, controller: any): void {
         try {
-            // Prefer explicit order from config if provided
-            const ordered = typeof config?.getOrder === 'function' ? config.getOrder() : undefined;
-            if (Array.isArray(ordered) && ordered.length) {
-                return ordered as string[];
+            // Use the controller's property rendering method
+            // This is how the default table view renders editable properties
+            if (controller?.renderProperty) {
+                controller.renderProperty(cell, entry, propertyId);
+            } else if (controller?.renderPropertyWidget) {
+                controller.renderPropertyWidget(cell, entry, propertyId);
+            } else {
+                // Fallback: render as plain text if no rendering method available
+                const value = this.getValueFor(entry, propertyId);
+                cell.createEl('span', { text: value });
             }
-
-            const ids = new Set<string>();
-            const app = this.app as any;
-
-            for (const entry of entries) {
-                const file = entry?.file;
-                const path = file?.path;
-                if (!path) continue;
-                try {
-                    const tfile = app.vault.getAbstractFileByPath(path);
-                    const cache = app.metadataCache?.getFileCache?.(tfile);
-                    const fm = cache?.frontmatter;
-                    if (fm && typeof fm === 'object') {
-                        for (const key of Object.keys(fm)) {
-                            ids.add(String(key));
-                        }
-                    }
-                } catch {}
-            }
-
-            const properties = Array.from(ids);
-            properties.sort();
-            return properties;
-        } catch {
-            return [];
+        } catch (error) {
+            console.error('Failed to render property widget:', error);
+            // Fallback to plain text display
+            const value = this.getValueFor(entry, propertyId);
+            cell.createEl('span', { text: value });
         }
     }
 
-    private isComputedProperty(propertyId: string): boolean {
-        return propertyId.startsWith('file.') || propertyId.startsWith('formula:');
-    }
-
-    private detectPropertyTypes(properties: string[], entries: any[]): Map<string, { type: 'checkbox' | 'number' | 'date' | 'text', isArray: boolean }> {
-        const metadata = new Map();
-        
-        const isDateString = (s: string) => /^(\d{4}-\d{2}-\d{2})(T.*)?$/.test(s);
-        const detectType = (v: any): 'checkbox' | 'number' | 'date' | 'text' => {
-            if (typeof v === 'boolean') return 'checkbox';
-            if (typeof v === 'number') return 'number';
-            if (typeof v === 'string' && isDateString(v)) return 'date';
-            // Check for Date objects from Value wrappers
-            if (v && typeof v === 'object' && v.date) return 'date';
-            return 'text';
-        };
-        
-        for (const pid of properties) {
-            let sample: any = undefined;
-            let isArray = false;
-            
-            for (const entry of entries) {
-                try {
-                    const v = entry.getValue(pid);
-                    
-                    if (Array.isArray(v)) {
-                        isArray = true;
-                        sample = v.length ? v[0] : '';
-                        break;
-                    }
-                    
-                    if (v != null) {
-                        // Unwrap Value objects
-                        if (typeof v === 'object' && 'value' in v) {
-                            sample = v.value;
-                        } else {
-                            sample = v;
-                        }
-                        break;
-                    }
-                } catch {
-                    continue;
-                }
-            }
-            
-            metadata.set(pid, {
-                type: detectType(sample),
-                isArray
-            });
-        }
-        
-        return metadata;
-    }
-
-    private getValueFor(entry: any, propertyId: string, app: any): string {
-        // Use the getValue method from the entry object
+    private getValueFor(entry: any, propertyId: string): string {
         try {
             const value = entry.getValue(propertyId);
             
@@ -235,18 +148,14 @@ class InputBasesView extends BasesView {
                 return '';
             }
             
-            // Handle different value types
             if (Array.isArray(value)) {
                 return value.join(', ');
             }
             
-            // Handle Value objects (Bases wraps values in Value objects)
             if (typeof value === 'object' && value !== null) {
-                // Check for date property
                 if (value.date) {
                     return value.date.toISOString().substring(0, 10);
                 }
-                // Check for value property
                 if ('value' in value) {
                     const v = value.value;
                     if (Array.isArray(v)) {
@@ -260,103 +169,5 @@ class InputBasesView extends BasesView {
         } catch {
             return '';
         }
-    }
-
-    private matchPropertyKey(propertyId: string, key: any): boolean {
-        if (key == null) return false;
-        
-        if (typeof key === 'string') {
-            return key === propertyId || 
-                   key.endsWith(`:${propertyId}`) || 
-                   propertyId.endsWith(`:${key}`);
-        }
-        
-        const keyId = key.id ?? key.name ?? key.key;
-        if (keyId == null) return false;
-        
-        const ks = String(keyId);
-        return ks === propertyId || 
-               ks.endsWith(`:${propertyId}`) || 
-               propertyId.endsWith(`:${ks}`);
-    }
-
-    private toPropKey(propertyId: string): string | null {
-        if (!propertyId) return null;
-        if (this.isComputedProperty(propertyId)) return null;
-        
-        // Property IDs in Bases are in format "property:propertyName" or just "propertyName"
-        // We need to extract the actual frontmatter key
-        const parts = propertyId.split(':');
-        return parts.length > 1 ? parts[parts.length - 1] : propertyId;
-    }
-
-    private createInputCell(
-        cell: HTMLTableCellElement,
-        entry: any,
-        propertyId: string,
-        rawValue: string,
-        metadata: any,
-        app: any,
-        config: any
-    ): void {
-        const type = metadata?.type ?? 'text';
-        const isArray = metadata?.isArray ?? false;
-        let input: HTMLInputElement;
-        
-        if (type === 'checkbox') {
-            input = cell.createEl('input', { 
-                type: 'checkbox', 
-                cls: 'input-view-cell-input' 
-            }) as HTMLInputElement;
-            input.checked = ['true', '1', 'yes', 'on'].includes(String(rawValue).toLowerCase());
-        } else if (type === 'number') {
-            input = cell.createEl('input', { 
-                type: 'number', 
-                cls: 'input-view-cell-input' 
-            }) as HTMLInputElement;
-            input.value = rawValue ?? '';
-        } else if (type === 'date') {
-            input = cell.createEl('input', { 
-                type: 'date', 
-                cls: 'input-view-cell-input' 
-            }) as HTMLInputElement;
-            input.value = (rawValue || '').substring(0, 10);
-        } else {
-            input = cell.createEl('input', { 
-                type: 'text', 
-                cls: 'input-view-cell-input' 
-            }) as HTMLInputElement;
-            input.value = rawValue ?? '';
-        }
-        
-        const commit = async () => {
-            const file = entry.file;
-            const propKey = this.toPropKey(propertyId);
-            if (!propKey) return;
-            
-            try {
-                const tfile = file?.path ? app.vault.getAbstractFileByPath(file.path) : null;
-                if (tfile && 'extension' in tfile) {
-                    await app.fileManager.processFrontMatter(tfile, (fm: Record<string, any>) => {
-                        if (type === 'checkbox') {
-                            fm[propKey] = input.checked;
-                        } else if (type === 'number') {
-                            const num = parseFloat(input.value);
-                            fm[propKey] = Number.isFinite(num) ? num : input.value;
-                        } else if (type === 'date') {
-                            fm[propKey] = input.value;
-                        } else {
-                            const v = input.value;
-                            fm[propKey] = isArray ? v.split(',').map(s => s.trim()).filter(Boolean) : v;
-                        }
-                    });
-                }
-            } catch (err) {
-                console.error('Failed to update property', { err, file, propKey });
-            }
-        };
-        
-        input.addEventListener('change', commit);
-        input.addEventListener('blur', commit);
     }
 }

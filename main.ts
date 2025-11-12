@@ -11,6 +11,12 @@ export default class InputViewPlugin extends Plugin {
                 return new InputBasesView(controller, containerEl);
             },
         });
+        
+        // Optional: Add styles for the input view
+        // You may want to add a styles.css file with:
+        // .input-view-table { width: 100%; border-collapse: collapse; }
+        // .input-view-table th, .input-view-table td { border: 1px solid var(--background-modifier-border); padding: 8px; }
+        // .input-view-cell-input { width: 100%; box-sizing: border-box; }
     }
 }
 
@@ -24,19 +30,21 @@ class InputBasesView extends BasesView {
     }
 
     public onOpen(): void {
-        // Initial render will happen in onDataUpdated
+        // Render will happen in onDataUpdated when data is available
         this.containerEl.empty();
+        this.containerEl.createDiv({ text: 'Loading...' });
     }
 
     public onClose(): void {
-        // Clean up DOM for view switch
+        // Clean up DOM
         this.containerEl.empty();
     }
 
     public onDataUpdated(): void {
-        const data = (this as any).data ?? (this as any).controller?.result;
-        const config = (this as any).config ?? (this as any).controller?.config;
-        const app = (this as any).app;
+        // Access data from the inherited property
+        const data = this.data;
+        const config = this.config;
+        const app = this.app;
 
         // Clear and rebuild table
         this.containerEl.empty();
@@ -48,7 +56,13 @@ class InputBasesView extends BasesView {
 
         // Extract entries from data
         const entries: any[] = this.normalizeEntries(data);
-        const files: any[] = entries.map((e: any) => e?.file ?? e?.note ?? e?.tfile ?? e).filter(Boolean);
+        
+        if (!entries || !entries.length) {
+            this.containerEl.createDiv({ text: 'No files in this base.' });
+            return;
+        }
+        
+        const files: any[] = entries.map((entry: any) => entry?.file).filter(Boolean);
 
         if (!files.length) {
             this.containerEl.createDiv({ text: 'No files in this base.' });
@@ -85,7 +99,8 @@ class InputBasesView extends BasesView {
         // Create rows for each property
         for (const propertyId of properties) {
             const row = tbody.createEl('tr');
-            const display = config.getDisplayName ? config.getDisplayName(propertyId) : String(propertyId);
+            // Get display name from config, fallback to property ID
+            const display = config?.getDisplayName ? config.getDisplayName(propertyId as any) : propertyId;
             row.createEl('th', { text: display });
 
             const isComputed = this.isComputedProperty(propertyId);
@@ -108,103 +123,49 @@ class InputBasesView extends BasesView {
     }
 
     private normalizeEntries(data: any): any[] {
-        try {
-            const e = data?.entries;
-            if (Array.isArray(e)) return e;
-            
-            // Handle Map-like entries
-            if (e && typeof e.entries === 'function') {
-                const pairs = Array.from(e.entries());
-                return pairs.map(([key, val]: [any, any]) => {
-                    const vObj: any = val;
-                    const values = vObj && typeof vObj === 'object' && 'values' in vObj ? vObj.values : vObj;
-                    return {
-                        file: key?.file ?? key,
-                        values
-                    };
-                });
-            }
-            
-            // Handle keys/get pattern
-            if (e && typeof e.keys === 'function' && typeof e.get === 'function') {
-                const arr: any[] = [];
-                for (const k of Array.from(e.keys())) {
-                    const v: any = e.get(k);
-                    const values = v && typeof v === 'object' && 'values' in v ? (v as any).values : v;
-                    const kk: any = k;
-                    const file = kk && typeof kk === 'object' && 'file' in kk ? (kk as any).file : kk;
-                    arr.push({ file, values });
-                }
-                return arr;
-            }
-            
-            // Handle forEach pattern
-            if (e && typeof e.forEach === 'function') {
-                const arr: any[] = [];
-                e.forEach((v: any, k: any) => {
-                    const values = v && typeof v === 'object' && 'values' in v ? (v as any).values : v;
-                    arr.push({ file: k?.file ?? k, values });
-                });
-                return arr;
-            }
-            
-            // Fallback patterns
-            const rows = data?.rows;
-            if (Array.isArray(rows)) return rows;
-            
-            const items = data?.items;
-            if (Array.isArray(items)) return items;
-            
-            // Files + values pattern
-            const filesArr = data?.files;
-            if (Array.isArray(filesArr)) {
-                const values = data?.values;
-                return filesArr.map((f: any) => ({
-                    file: f,
-                    values: values?.get?.(f) ?? values?.[f?.path] ?? values?.[f?.name] ?? values?.[f?.basename]
-                }));
-            }
-            
-            return [];
-        } catch {
+        // data should have a .data property that contains the array of entries
+        const entries = data?.data;
+        
+        if (!entries) {
             return [];
         }
+        
+        if (!Array.isArray(entries)) {
+            return [];
+        }
+        
+        return entries;
     }
 
     private getProperties(entries: any[], config: any): string[] {
         try {
-            // Try to get ordered properties from config
-            const ordered = config.getOrder?.();
+            // Prefer explicit order from config if provided
+            const ordered = typeof config?.getOrder === 'function' ? config.getOrder() : undefined;
             if (Array.isArray(ordered) && ordered.length) {
-                return ordered;
+                return ordered as string[];
             }
-            
-            // Otherwise collect all unique property IDs from entries
+
             const ids = new Set<string>();
+            const app = this.app as any;
+
             for (const entry of entries) {
-                const vals = entry?.values;
-                if (!vals) continue;
-                
-                if (vals?.entries && typeof vals.entries === 'function') {
-                    for (const [pid] of vals.entries()) {
-                        ids.add(String(pid));
+                const file = entry?.file;
+                const path = file?.path;
+                if (!path) continue;
+                try {
+                    const tfile = app.vault.getAbstractFileByPath(path);
+                    const cache = app.metadataCache?.getFileCache?.(tfile);
+                    const fm = cache?.frontmatter;
+                    if (fm && typeof fm === 'object') {
+                        for (const key of Object.keys(fm)) {
+                            ids.add(String(key));
+                        }
                     }
-                } else if (typeof vals?.forEach === 'function') {
-                    vals.forEach((_v: any, pid: any) => ids.add(String(pid)));
-                } else if (typeof vals === 'object') {
-                    for (const pid of Object.keys(vals)) {
-                        ids.add(String(pid));
-                    }
-                }
+                } catch {}
             }
-            
+
             const properties = Array.from(ids);
-            
-            // Sort alphabetically if no explicit order
-            if (!ordered || !ordered.length) {
-                properties.sort();
-            }
-            
+            properties.sort();
             return properties;
         } catch {
             return [];
@@ -223,6 +184,8 @@ class InputBasesView extends BasesView {
             if (typeof v === 'boolean') return 'checkbox';
             if (typeof v === 'number') return 'number';
             if (typeof v === 'string' && isDateString(v)) return 'date';
+            // Check for Date objects from Value wrappers
+            if (v && typeof v === 'object' && v.date) return 'date';
             return 'text';
         };
         
@@ -231,24 +194,26 @@ class InputBasesView extends BasesView {
             let isArray = false;
             
             for (const entry of entries) {
-                const vals = entry?.values;
-                let v: any;
-                
-                if (vals?.get) {
-                    v = vals.get(pid);
-                } else if (vals && typeof vals === 'object') {
-                    v = vals[pid];
-                }
-                
-                if (Array.isArray(v)) {
-                    isArray = true;
-                    sample = v.length ? v[0] : '';
-                    break;
-                }
-                
-                if (v != null) {
-                    sample = v;
-                    break;
+                try {
+                    const v = entry.getValue(pid);
+                    
+                    if (Array.isArray(v)) {
+                        isArray = true;
+                        sample = v.length ? v[0] : '';
+                        break;
+                    }
+                    
+                    if (v != null) {
+                        // Unwrap Value objects
+                        if (typeof v === 'object' && 'value' in v) {
+                            sample = v.value;
+                        } else {
+                            sample = v;
+                        }
+                        break;
+                    }
+                } catch {
+                    continue;
                 }
             }
             
@@ -262,59 +227,36 @@ class InputBasesView extends BasesView {
     }
 
     private getValueFor(entry: any, propertyId: string, app: any): string {
-        const vals = entry?.values;
-        if (!vals) return '';
-        
-        const formatValue = (v: any) => {
-            if (v == null) return '';
-            if (Array.isArray(v)) return v.join(', ');
-            if (typeof v === 'object' && 'value' in v) return String(v.value);
-            return String(v);
-        };
-        
+        // Use the getValue method from the entry object
         try {
-            // Try Map-like access
-            if (typeof vals.get === 'function') {
-                let v = vals.get(propertyId);
-                
-                // Fallback: search by matching key
-                if (v === undefined && typeof vals.entries === 'function') {
-                    for (const [k, vv] of vals.entries()) {
-                        if (this.matchPropertyKey(propertyId, k)) {
-                            v = vv;
-                            break;
-                        }
+            const value = entry.getValue(propertyId);
+            
+            if (value == null || value === undefined) {
+                return '';
+            }
+            
+            // Handle different value types
+            if (Array.isArray(value)) {
+                return value.join(', ');
+            }
+            
+            // Handle Value objects (Bases wraps values in Value objects)
+            if (typeof value === 'object' && value !== null) {
+                // Check for date property
+                if (value.date) {
+                    return value.date.toISOString().substring(0, 10);
+                }
+                // Check for value property
+                if ('value' in value) {
+                    const v = value.value;
+                    if (Array.isArray(v)) {
+                        return v.join(', ');
                     }
-                }
-                
-                return formatValue(v);
-            }
-            
-            // Try object access
-            if (propertyId in vals) {
-                return formatValue(vals[propertyId]);
-            }
-            
-            // Search object entries
-            for (const [k, v] of Object.entries(vals)) {
-                if (this.matchPropertyKey(propertyId, k)) {
-                    return formatValue(v);
+                    return String(v);
                 }
             }
             
-            // Fallback to frontmatter
-            const file = entry?.file ?? entry?.note ?? entry?.tfile;
-            const propKey = this.toPropKey(propertyId);
-            if (file?.path && propKey) {
-                const tfile = app.vault.getAbstractFileByPath(file.path);
-                const cache = app.metadataCache?.getFileCache?.(tfile);
-                const fm = cache?.frontmatter;
-                if (fm && propKey in fm) {
-                    return formatValue(fm[propKey]);
-                }
-            }
-            
-            return '';
+            return String(value);
         } catch {
             return '';
         }
@@ -342,8 +284,10 @@ class InputBasesView extends BasesView {
         if (!propertyId) return null;
         if (this.isComputedProperty(propertyId)) return null;
         
+        // Property IDs in Bases are in format "property:propertyName" or just "propertyName"
+        // We need to extract the actual frontmatter key
         const parts = propertyId.split(':');
-        return parts.length > 1 ? parts[1] : propertyId;
+        return parts.length > 1 ? parts[parts.length - 1] : propertyId;
     }
 
     private createInputCell(

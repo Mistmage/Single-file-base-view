@@ -23,9 +23,11 @@ export default class InputViewPlugin extends Plugin {
 class InputBasesView extends BasesView {
     readonly type = INPUT_VIEW_TYPE;
     private containerEl: HTMLElement;
+    private controllerRef: any;
 
     constructor(controller: any, parentEl: HTMLElement) {
         super(controller);
+        this.controllerRef = controller;
         this.containerEl = parentEl.createDiv('input-view-container');
     }
 
@@ -45,7 +47,7 @@ class InputBasesView extends BasesView {
         const data = this.data;
         const config = this.config;
         const app = this.app;
-        const controller = (this as any).controller;
+        const controller = this.controllerRef;
 
         // Clear and rebuild table
         this.containerEl.empty();
@@ -118,10 +120,10 @@ class InputBasesView extends BasesView {
                 } else {
                     // Use Bases controller to render the proper widget, which handles saving
                     try {
-                        if (controller?.renderProperty) {
-                            controller.renderProperty(cell, entry, propertyId);
-                        } else if (controller?.renderPropertyWidget) {
+                        if (controller?.renderPropertyWidget) {
                             controller.renderPropertyWidget(cell, entry, propertyId);
+                        } else if (controller?.renderProperty) {
+                            controller.renderProperty(cell, entry, propertyId);
                         } else {
                             // Fallback to text if no renderer is available
                             cell.createEl('span', { text: raw ?? '' });
@@ -313,14 +315,14 @@ class InputBasesView extends BasesView {
         config: any
     ): void {
         // Prefer Bases controller property renderer for correct saving behavior
-        const controller = (this as any).controller;
+        const controller = this.controllerRef;
         try {
-            if (controller?.renderProperty) {
-                controller.renderProperty(cell, entry, propertyId);
-                return;
-            }
             if (controller?.renderPropertyWidget) {
                 controller.renderPropertyWidget(cell, entry, propertyId);
+                return;
+            }
+            if (controller?.renderProperty) {
+                controller.renderProperty(cell, entry, propertyId);
                 return;
             }
         } catch (error) {

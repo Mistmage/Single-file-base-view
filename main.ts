@@ -84,10 +84,9 @@ class InputBasesView extends BasesView {
             properties = [];
         }
 
-        // Filter out non-editable/computed properties and sort for stability if no config order.
+        // Keep computed properties visible (read-only). Sort when no explicit order.
         const isComputed = (pid: string) => pid.startsWith('file.') || pid.startsWith('formula:');
         const hasOrder = config.getOrder && Array.isArray(config.getOrder()) && config.getOrder().length > 0;
-        properties = properties.filter((pid) => !isComputed(pid));
         if (!hasOrder) properties.sort();
 
         for (const file of files) {
@@ -97,15 +96,49 @@ class InputBasesView extends BasesView {
         const tbody = table.createEl('tbody');
 
         const valueFor = (entry: any, propertyId: any) => {
+            const vals = entry?.values;
+            const matchKey = (pid: string, key: any) => {
+                if (key == null) return false;
+                if (typeof key === 'string') {
+                    return key === pid || key.endsWith(`:${pid}`) || pid.endsWith(`:${key}`);
+                }
+                const kid = (key as any).id ?? (key as any).name ?? (key as any).key;
+                if (kid == null) return false;
+                const ks = String(kid);
+                return ks === pid || ks.endsWith(`:${pid}`) || pid.endsWith(`:${ks}`);
+            };
             try {
-                const vals = entry.values;
-                let v: any;
-                if (vals?.get) v = vals.get(propertyId);
-                else v = vals?.[propertyId];
-                if (v == null) return '';
-                if (Array.isArray(v)) return v.join(', ');
-                if (typeof v === 'object' && v && 'value' in v) return String((v as any).value);
-                return String(v);
+                if (!vals) return '';
+                if (typeof (vals as any).get === 'function') {
+                    let v = (vals as any).get(propertyId);
+                    if (v === undefined && typeof (vals as any).entries === 'function') {
+                        for (const [k, vv] of (vals as any).entries()) {
+                            if (matchKey(propertyId, k)) { v = vv; break; }
+                        }
+                    }
+                    if (v == null) return '';
+                    if (Array.isArray(v)) return v.join(', ');
+                    if (typeof v === 'object' && v && 'value' in v) return String((v as any).value);
+                    return String(v);
+                } else {
+                    // object-like fallback
+                    if (propertyId in (vals as any)) {
+                        const v = (vals as any)[propertyId];
+                        if (v == null) return '';
+                        if (Array.isArray(v)) return v.join(', ');
+                        if (typeof v === 'object' && v && 'value' in v) return String((v as any).value);
+                        return String(v);
+                    }
+                    for (const [k, v] of Object.entries(vals as any)) {
+                        if (matchKey(propertyId, k)) {
+                            if (v == null) return '';
+                            if (Array.isArray(v)) return (v as any[]).join(', ');
+                            if (typeof v === 'object' && v && 'value' in (v as any)) return String((v as any).value);
+                            return String(v);
+                        }
+                    }
+                    return '';
+                }
             } catch {
                 return '';
             }
@@ -159,22 +192,28 @@ class InputBasesView extends BasesView {
             for (let i = 0; i < entries.length; i++) {
                 const entry = entries[i];
                 const cell = row.createEl('td');
+                const editable = !isComputed(propertyId);
                 const type = propertyType.get(propertyId) ?? 'text';
-                let input: HTMLInputElement;
-                if (type === 'checkbox') {
+                const raw = valueFor(entry, propertyId);
+                let input: HTMLInputElement | null = null;
+                if (!editable) {
+                    cell.createEl('span', { text: raw ?? '' });
+                } else if (type === 'checkbox') {
                     input = cell.createEl('input', { type: 'checkbox', cls: 'input-view-cell-input' }) as HTMLInputElement;
-                    const raw = valueFor(entry, propertyId);
-                    input.checked = raw === 'true' || raw === '1' || raw === 'yes';
+                    input.checked = ['true','1','yes','on'].includes(String(raw).toLowerCase());
                 } else if (type === 'number') {
                     input = cell.createEl('input', { type: 'number', cls: 'input-view-cell-input' }) as HTMLInputElement;
-                    input.value = valueFor(entry, propertyId);
+                    input.value = raw ?? '';
                 } else if (type === 'date') {
                     input = cell.createEl('input', { type: 'date', cls: 'input-view-cell-input' }) as HTMLInputElement;
-                    const raw = valueFor(entry, propertyId);
                     input.value = (raw || '').substring(0, 10);
                 } else {
                     input = cell.createEl('input', { type: 'text', cls: 'input-view-cell-input' }) as HTMLInputElement;
-                    input.value = valueFor(entry, propertyId);
+                    input.value = raw ?? '';
+                }
+
+                if (!input) {
+                    continue;
                 }
 
                 const commit = async () => {
@@ -186,15 +225,16 @@ class InputBasesView extends BasesView {
                         if (tfile && 'extension' in tfile) {
                             await app.fileManager.processFrontMatter(tfile as any, (fm: Record<string, any>) => {
                                 if (type === 'checkbox') {
-                                    fm[propKey] = !!(input as any).checked;
+                                    fm[propKey] = !!(input as HTMLInputElement).checked;
                                 } else if (type === 'number') {
-                                    const num = parseFloat(input.value);
-                                    fm[propKey] = Number.isFinite(num) ? num : input.value;
+                                    const num = parseFloat((input as HTMLInputElement).value);
+                                    fm[propKey] = Number.isFinite(num) ? num : (input as HTMLInputElement).value;
                                 } else if (type === 'date') {
-                                    fm[propKey] = input.value; // store as YYYY-MM-DD
+                                    fm[propKey] = (input as HTMLInputElement).value; // store as YYYY-MM-DD
                                 } else {
                                     const isArr = propertyIsArray.get(propertyId) === true;
-                                    fm[propKey] = isArr ? input.value.split(',').map(s => s.trim()).filter(Boolean) : input.value;
+                                    const v = (input as HTMLInputElement).value;
+                                    fm[propKey] = isArr ? v.split(',').map(s => s.trim()).filter(Boolean) : v;
                                 }
                             });
                         }
@@ -203,8 +243,10 @@ class InputBasesView extends BasesView {
                     }
                 };
 
-                input.addEventListener('change', commit);
-                input.addEventListener('blur', commit);
+                if (input) {
+                    input.addEventListener('change', commit);
+                    input.addEventListener('blur', commit);
+                }
             }
         }
     }

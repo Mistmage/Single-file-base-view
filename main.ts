@@ -115,27 +115,28 @@ class InputBasesView extends BasesView {
             // Create cells for each file
             for (const entry of entries) {
                 const cell = row.createEl('td');
+                const widgetContainer = cell.createDiv({ cls: 'input-view-widget' });
                 const raw = this.getValueFor(entry, propertyId, app);
                 
                 if (isComputed) {
                     // Read-only cell
-                    cell.createEl('span', { text: raw ?? '' });
+                    widgetContainer.createEl('span', { text: raw ?? '' });
                 } else {
                     // Use Bases controller to render the proper widget, which handles saving
                     try {
                         if (controller?.renderPropertyWidget) {
                             console.debug('[Input view] renderPropertyWidget', propertyId);
-                            controller.renderPropertyWidget(cell, entry, propertyId);
+                            controller.renderPropertyWidget(widgetContainer, entry, propertyId);
                         } else if (controller?.renderProperty) {
                             console.debug('[Input view] renderProperty', propertyId);
-                            controller.renderProperty(cell, entry, propertyId);
+                            controller.renderProperty(widgetContainer, entry, propertyId);
                         } else {
                             // Fallback to text if no renderer is available
-                            cell.createEl('span', { text: raw ?? '' });
+                            widgetContainer.createEl('span', { text: raw ?? '' });
                         }
                     } catch (err) {
                         console.error('Failed to render property widget:', err);
-                        cell.createEl('span', { text: raw ?? '' });
+                        widgetContainer.createEl('span', { text: raw ?? '' });
                     }
                 }
             }
@@ -322,14 +323,15 @@ class InputBasesView extends BasesView {
         // Prefer Bases controller property renderer for correct saving behavior
         const controller = this.controllerRef;
         try {
+            const widgetContainer = cell.createDiv({ cls: 'input-view-widget' });
             if (controller?.renderPropertyWidget) {
                 console.debug('[Input view] fallback renderPropertyWidget', propertyId);
-                controller.renderPropertyWidget(cell, entry, propertyId);
+                controller.renderPropertyWidget(widgetContainer, entry, propertyId);
                 return;
             }
             if (controller?.renderProperty) {
                 console.debug('[Input view] fallback renderProperty', propertyId);
-                controller.renderProperty(cell, entry, propertyId);
+                controller.renderProperty(widgetContainer, entry, propertyId);
                 return;
             }
         } catch (error) {

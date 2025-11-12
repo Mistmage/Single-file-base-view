@@ -56,8 +56,21 @@ class InputBasesView extends BasesView {
             return;
         }
 
-        const entries: any[] = Array.isArray(data?.entries) ? data.entries : [];
-        const files: any[] = entries.map((e: any) => e.file);
+        // Normalize entries from various possible result shapes (array, Map, Set, rows/items).
+        const normalizeEntries = (d: any): any[] => {
+            try {
+                const e = d?.entries;
+                if (Array.isArray(e)) return e;
+                if (e && typeof e.values === 'function') return Array.from(e.values());
+                if (e && typeof e.forEach === 'function') { const arr: any[] = []; e.forEach((v: any) => arr.push(v)); return arr; }
+                const rows = d?.rows; if (Array.isArray(rows)) return rows;
+                const items = d?.items; if (Array.isArray(items)) return items;
+                const res = (this as any).controller?.result?.entries; if (Array.isArray(res)) return res;
+                return [];
+            } catch { return []; }
+        };
+        const entries: any[] = normalizeEntries(data);
+        const files: any[] = entries.map((e: any) => e?.file ?? e?.note ?? e?.tfile ?? e).filter(Boolean);
 
         // Derive property list: prefer view-config order, else union of entry value keys.
         let properties: string[] = [];
@@ -90,7 +103,8 @@ class InputBasesView extends BasesView {
         if (!hasOrder) properties.sort();
 
         for (const file of files) {
-            headRow.createEl('th', { text: file?.name ?? file?.path ?? 'File' });
+            const name = (file?.basename ?? file?.name ?? file?.title ?? file?.path ?? 'File');
+            headRow.createEl('th', { text: String(name) });
         }
 
         const tbody = table.createEl('tbody');
@@ -137,6 +151,21 @@ class InputBasesView extends BasesView {
                             return String(v);
                         }
                     }
+                    // Final fallback: derive from frontmatter when available.
+                    try {
+                        const file = entry?.file ?? entry?.note ?? entry?.tfile;
+                        const propKey = toPropKey(propertyId);
+                        if (file?.path && propKey) {
+                            const tfile = (app.vault.getAbstractFileByPath(file.path) as any);
+                            const cache = (app.metadataCache as any)?.getFileCache?.(tfile);
+                            const fm = cache?.frontmatter;
+                            if (fm && propKey in fm) {
+                                const v = fm[propKey];
+                                if (Array.isArray(v)) return v.join(', ');
+                                return String(v);
+                            }
+                        }
+                    } catch {}
                     return '';
                 }
             } catch {

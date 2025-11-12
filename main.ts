@@ -69,6 +69,15 @@ class InputBasesView extends BasesView {
                         values: val?.values ?? val,
                     }));
                 }
+                // If keys()/get() exist, derive pairs from keys.
+                if (e && typeof e.keys === 'function' && typeof e.get === 'function') {
+                    const arr: any[] = [];
+                    for (const k of Array.from(e.keys())) {
+                        const v: any = e.get(k) as any;
+                        arr.push({ file: (k as any)?.file ?? k, values: v?.values ?? v });
+                    }
+                    return arr;
+                }
                 if (e && typeof e.forEach === 'function') {
                     const arr: any[] = [];
                     e.forEach((v: any, k: any) => arr.push({ file: k?.file ?? k, values: v?.values ?? v }));
@@ -77,6 +86,18 @@ class InputBasesView extends BasesView {
                 // Rows/items fallback: expect objects with { file, values }
                 const rows = d?.rows; if (Array.isArray(rows)) return rows;
                 const items = d?.items; if (Array.isArray(items)) return items;
+                // Files + values map shape: { files: TFile[], values: Map<TFile, Values> }
+                const filesArr = d?.files; if (Array.isArray(filesArr)) {
+                    const values = d?.values;
+                    const getVals = (f: any) => {
+                        try {
+                            if (values?.get) return values.get(f);
+                            if (values && typeof values === 'object') return values[f?.path] ?? values[f?.name] ?? values[f?.basename];
+                        } catch {}
+                        return undefined;
+                    };
+                    return filesArr.map((f: any) => ({ file: f, values: getVals(f) }));
+                }
                 const res = (this as any).controller?.result?.entries; if (Array.isArray(res)) return res;
                 return [];
             } catch { return []; }

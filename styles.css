@@ -6,3 +6,28 @@ available in the app when your plugin is enabled.
 If your plugin does not need CSS, delete this file.
 
 */
+
+.input-view-container {
+  overflow: auto;
+}
+
+.input-view-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.input-view-table th,
+.input-view-table td {
+  border: 1px solid var(--background-modifier-border);
+  padding: 6px 8px;
+}
+
+.input-view-table thead th {
+  background: var(--background-secondary);
+  font-weight: 600;
+}
+
+.input-view-cell-input {
+  width: 100%;
+  box-sizing: border-box;
+}

@@ -1,11 +1,11 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
+	"id": "bases-input-view",
+	"name": "Bases Input View",
 	"version": "1.0.0",
-	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
+	"minAppVersion": "1.10.0",
+	"description": "Adds a simple Bases \"Input view\" that shows files as columns and properties as rows, with editable cells.",
+	"author": "Rai",
+	"authorUrl": "",
+	"fundingUrl": "",
 	"isDesktopOnly": false
 }

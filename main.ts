@@ -61,8 +61,20 @@ class InputBasesView extends BasesView {
             try {
                 const e = d?.entries;
                 if (Array.isArray(e)) return e;
-                if (e && typeof e.values === 'function') return Array.from(e.values());
-                if (e && typeof e.forEach === 'function') { const arr: any[] = []; e.forEach((v: any) => arr.push(v)); return arr; }
+                // Prefer Map-like entries so we can include the file key.
+                if (e && typeof e.entries === 'function') {
+                    const pairs = Array.from(e.entries());
+                    return pairs.map(([key, val]: [any, any]) => ({
+                        file: key?.file ?? key, // key is often TFile
+                        values: val?.values ?? val,
+                    }));
+                }
+                if (e && typeof e.forEach === 'function') {
+                    const arr: any[] = [];
+                    e.forEach((v: any, k: any) => arr.push({ file: k?.file ?? k, values: v?.values ?? v }));
+                    return arr;
+                }
+                // Rows/items fallback: expect objects with { file, values }
                 const rows = d?.rows; if (Array.isArray(rows)) return rows;
                 const items = d?.items; if (Array.isArray(items)) return items;
                 const res = (this as any).controller?.result?.entries; if (Array.isArray(res)) return res;

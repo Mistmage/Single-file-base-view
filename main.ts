@@ -74,6 +74,9 @@ class InputBasesView extends BasesView {
 
         // Get property list
         const properties: string[] = this.getProperties(entries, config);
+        try {
+            console.debug('[Input view] entries:', entries.length, 'properties:', properties);
+        } catch {}
 
         if (!properties.length) {
             const hint = this.containerEl.createDiv();
@@ -113,7 +116,7 @@ class InputBasesView extends BasesView {
             for (const entry of entries) {
                 const cell = row.createEl('td');
                 const raw = this.getValueFor(entry, propertyId, app);
-
+                
                 if (isComputed) {
                     // Read-only cell
                     cell.createEl('span', { text: raw ?? '' });
@@ -121,8 +124,10 @@ class InputBasesView extends BasesView {
                     // Use Bases controller to render the proper widget, which handles saving
                     try {
                         if (controller?.renderPropertyWidget) {
+                            console.debug('[Input view] renderPropertyWidget', propertyId);
                             controller.renderPropertyWidget(cell, entry, propertyId);
                         } else if (controller?.renderProperty) {
+                            console.debug('[Input view] renderProperty', propertyId);
                             controller.renderProperty(cell, entry, propertyId);
                         } else {
                             // Fallback to text if no renderer is available
@@ -318,10 +323,12 @@ class InputBasesView extends BasesView {
         const controller = this.controllerRef;
         try {
             if (controller?.renderPropertyWidget) {
+                console.debug('[Input view] fallback renderPropertyWidget', propertyId);
                 controller.renderPropertyWidget(cell, entry, propertyId);
                 return;
             }
             if (controller?.renderProperty) {
+                console.debug('[Input view] fallback renderProperty', propertyId);
                 controller.renderProperty(cell, entry, propertyId);
                 return;
             }

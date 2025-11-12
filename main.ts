@@ -160,6 +160,11 @@ class InputBasesView extends BasesView {
 
     private getProperties(entries: any[], config: any): string[] {
         try {
+            // Use properties from the Bases query result if available
+            const dataProps = Array.isArray((this as any)?.data?.properties) ? (this as any).data.properties as string[] : undefined;
+            if (dataProps && dataProps.length) {
+                return dataProps;
+            }
             // Prefer explicit order from config if provided
             const ordered = typeof config?.getOrder === 'function' ? config.getOrder() : undefined;
             if (Array.isArray(ordered) && ordered.length) {

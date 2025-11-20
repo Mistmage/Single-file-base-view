@@ -39,4 +39,9 @@ If your plugin does not need CSS, delete this file.
   display: block;
   max-width: 100%;
   height: auto;
+  cursor: grab;
+}
+
+.map-view-svg-wrapper svg.dragging {
+  cursor: grabbing;
 }

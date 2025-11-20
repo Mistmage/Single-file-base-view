@@ -1,14 +1,15 @@
 // SVG map visualization (inspired by Obsidian Maps)
-// Renders notes as nodes with optional pathways/edges, based on frontmatter.
-// Distance-driven layout only (no absolute positions):
+// Renders notes as nodes with optional pathways/edges, based on FRONTMATTER ONLY.
+// Distance-driven layout only (no absolute positions, no note content parsing).
 // Minimal schema:
 // - type: 'world' | 'continent' | 'region' | 'territory' | 'location' | 'pathway'
 // - name: string (optional)
 // - color: string (optional)
 // - size: number | [w, h] (optional)
-// - distances/pathways: [note-link | id] (optional) with optional length
-// - wiki-links in note content: [[City A#50]] or [[Locations/City A#50]]
-//   where the fragment (e.g., 50) denotes desired relative edge length.
+// - distances/pathways: list items that can be:
+//   - strings like "target @ 0.4" or "target : 40"
+//   - wiki-link strings like "[[Target Note#50]]" (fragment denotes desired length)
+//   - objects with { target, distance }
 
 export type MapEntityType =
   | 'world'
@@ -77,10 +78,15 @@ function createSvg(options: MapOptions) {
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   svg.style.border = '1px solid var(--background-modifier-border)';
   svg.style.background = 'var(--background-primary)';
+  // content group to allow pan transforms
+  const content = document.createElementNS(SVG_NS, 'g');
+  content.setAttribute('class', 'map-content');
+  svg.appendChild(content);
+  enableDragPan(svg, content);
   return svg;
 }
 
-function drawEdge(svg: SVGSVGElement, nodesById: Map<string, MapNode>, e: MapEdge) {
+function drawEdge(container: SVGGElement, nodesById: Map<string, MapNode>, e: MapEdge) {
   const a = nodesById.get(e.fromId);
   const b = nodesById.get(e.toId);
   if (!a || !b) return;
@@ -91,10 +97,10 @@ function drawEdge(svg: SVGSVGElement, nodesById: Map<string, MapNode>, e: MapEdg
   line.setAttribute('y2', String(b.y));
   line.setAttribute('stroke', 'var(--text-muted)');
   line.setAttribute('stroke-width', '1.5');
-  svg.appendChild(line);
+  container.appendChild(line);
 }
 
-function drawNode(svg: SVGSVGElement, n: MapNode, options: MapOptions) {
+function drawNode(container: SVGGElement, n: MapNode, options: MapOptions) {
   const { defaultSize = 10 } = options;
   const size = n.size ?? defaultSize;
   const circle = document.createElementNS(SVG_NS, 'circle');
@@ -103,7 +109,7 @@ function drawNode(svg: SVGSVGElement, n: MapNode, options: MapOptions) {
   circle.setAttribute('r', String(size));
   circle.setAttribute('fill', n.color ?? 'var(--interactive-accent)');
   circle.setAttribute('opacity', n.type === 'location' ? '1' : '0.5');
-  svg.appendChild(circle);
+  container.appendChild(circle);
 
   if (n.name) {
     const text = document.createElementNS(SVG_NS, 'text');
@@ -112,7 +118,7 @@ function drawNode(svg: SVGSVGElement, n: MapNode, options: MapOptions) {
     text.setAttribute('fill', 'var(--text-normal)');
     text.setAttribute('font-size', '12');
     text.textContent = n.name;
-    svg.appendChild(text);
+    container.appendChild(text);
   }
 }
 
@@ -152,14 +158,28 @@ export function buildMapDataFromEntries(app: any, entries: any[]): { nodes: MapN
       let target: string | undefined;
       let lengthRel: number | undefined;
       if (typeof p === 'string') {
-        // support formats: "target", "target @ 0.4", "target (0.4)", "target : 40"
-        const m = p.match(/^(.*?)\s*(?:@|\(|:|\|)\s*(\d+(?:\.\d+)?)\)?\s*$/);
-        if (m) {
-          target = m[1].trim();
-          const rel = toRel(m[2]);
-          if (rel != null) lengthRel = rel;
+        // support wiki-link pattern: [[Target#50]]
+        const w = p.match(/^\s*\[\[(.+?)\]\]\s*$/);
+        if (w) {
+          const inside = w[1];
+          const [linkPath, frag] = inside.split('#');
+          if (linkPath) {
+            target = linkPath.trim();
+          }
+          if (frag) {
+            const rel = toRel(frag.trim());
+            if (rel != null) lengthRel = rel;
+          }
         } else {
-          target = p.trim();
+          // support formats: "target", "target @ 0.4", "target (0.4)", "target : 40"
+          const m = p.match(/^(.*?)\s*(?:@|\(|:|\|)\s*(\d+(?:\.\d+)?)\)?\s*$/);
+          if (m) {
+            target = m[1].trim();
+            const rel = toRel(m[2]);
+            if (rel != null) lengthRel = rel;
+          } else {
+            target = p.trim();
+          }
         }
       } else if (p && typeof p === 'object') {
         target = (p as any).target || (p as any).path || (p as any).id;
@@ -167,25 +187,11 @@ export function buildMapDataFromEntries(app: any, entries: any[]): { nodes: MapN
         if (rel != null) lengthRel = rel;
       }
       if (typeof target === 'string') {
-        edges.push({ fromId: file.path, toId: target, length: lengthRel });
+        // Resolve to actual file path if possible
+        const dest = app.metadataCache.getFirstLinkpathDest?.(target, file.path);
+        const toId = dest?.path ?? target;
+        edges.push({ fromId: file.path, toId, length: lengthRel });
       }
-    }
-
-    // wiki-links in note content with #distance fragments
-    const links: any[] = Array.isArray((cache as any)?.links) ? (cache as any).links : [];
-    for (const l of links) {
-      const raw = (l as any).link || '';
-      const [linkPath, frag] = raw.split('#');
-      if (!linkPath) continue;
-      let lengthRel: number | undefined = undefined;
-      if (frag) {
-        const num = toRel(frag.trim());
-        if (num != null) lengthRel = num;
-      }
-      // Resolve to actual file path if possible
-      const dest = app.metadataCache.getFirstLinkpathDest?.(linkPath, file.path);
-      const toId = dest?.path ?? linkPath;
-      edges.push({ fromId: file.path, toId, length: lengthRel });
     }
   }
 
@@ -200,8 +206,9 @@ export function renderMapSVGFromEntries(app: any, entries: any[], options: MapOp
   projectRelativePositions(nodes, options);
   const svg = createSvg(options);
   const nodesById = new Map(nodes.map((n) => [n.id, n]));
-  for (const e of edges) drawEdge(svg, nodesById, e);
-  for (const n of nodes) drawNode(svg, n, options);
+  const container = svg.querySelector('g.map-content') as SVGGElement;
+  for (const e of edges) drawEdge(container, nodesById, e);
+  for (const n of nodes) drawNode(container, n, options);
   return svg;
 }
 
@@ -265,6 +272,46 @@ function layoutNodesByDistances(nodes: MapNode[], edges: MapEdge[], options: Map
       b.y = Math.min(1, Math.max(0, b.y));
     }
   }
+}
+
+// Drag-to-pan interaction for the SVG map
+function enableDragPan(svg: SVGSVGElement, content: SVGGElement) {
+  let isPanning = false;
+  let startX = 0;
+  let startY = 0;
+  let panX = 0;
+  let panY = 0;
+
+  const onPointerDown = (ev: PointerEvent) => {
+    isPanning = true;
+    startX = ev.clientX;
+    startY = ev.clientY;
+    svg.setPointerCapture?.(ev.pointerId);
+    svg.classList.add('dragging');
+  };
+  const onPointerMove = (ev: PointerEvent) => {
+    if (!isPanning) return;
+    const dx = ev.clientX - startX;
+    const dy = ev.clientY - startY;
+    const tx = panX + dx;
+    const ty = panY + dy;
+    content.setAttribute('transform', `translate(${tx}, ${ty})`);
+  };
+  const onPointerUp = (ev: PointerEvent) => {
+    if (!isPanning) return;
+    const dx = ev.clientX - startX;
+    const dy = ev.clientY - startY;
+    panX += dx;
+    panY += dy;
+    isPanning = false;
+    svg.releasePointerCapture?.(ev.pointerId);
+    svg.classList.remove('dragging');
+  };
+
+  svg.addEventListener('pointerdown', onPointerDown);
+  svg.addEventListener('pointermove', onPointerMove);
+  svg.addEventListener('pointerup', onPointerUp);
+  svg.addEventListener('pointerleave', onPointerUp);
 }
 
 export {};

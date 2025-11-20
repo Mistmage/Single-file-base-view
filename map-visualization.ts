@@ -45,6 +45,14 @@ export interface MapOptions {
   iterations?: number; // solver iterations
   stiffness?: number; // spring constant
   damping?: number; // damping factor per step
+  // Frontmatter mappings and toggles
+  distancesKeys?: string[];
+  sizeKey?: string;
+  colorKey?: string;
+  typeKey?: string;
+  nameKey?: string;
+  resolveLinks?: boolean;
+  normalizeAbsoluteLengths?: boolean;
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
@@ -122,10 +130,16 @@ function drawNode(container: SVGGElement, n: MapNode, options: MapOptions) {
   }
 }
 
-export function buildMapDataFromEntries(app: any, entries: any[]): { nodes: MapNode[]; edges: MapEdge[] } {
+export function buildMapDataFromEntries(app: any, entries: any[], opt?: MapOptions): { nodes: MapNode[]; edges: MapEdge[] } {
   const nodes: MapNode[] = [];
   const edges: MapEdge[] = [];
   const idByPath = new Map<string, string>();
+  const typeKey = opt?.typeKey ?? 'type';
+  const nameKey = opt?.nameKey ?? 'name';
+  const colorKey = opt?.colorKey ?? 'color';
+  const sizeKey = opt?.sizeKey ?? 'size';
+  const distancesKeys = (opt?.distancesKeys && opt.distancesKeys.length ? opt.distancesKeys : ['distances', 'pathways']);
+  const resolveLinks = opt?.resolveLinks ?? true;
 
   for (const entry of entries) {
     const file = entry?.file;
@@ -135,8 +149,8 @@ export function buildMapDataFromEntries(app: any, entries: any[]): { nodes: MapN
     const cache = app.metadataCache.getFileCache(tfile as any);
     const fm = cache?.frontmatter ?? {};
 
-    const type: MapEntityType = (fm.type as MapEntityType) || 'location';
-    const name: string | undefined = (fm as any).name || file.basename;
+    const type: MapEntityType = ((fm as any)[typeKey] as MapEntityType) || 'location';
+    const name: string | undefined = (fm as any)[nameKey] || file.basename;
 
     const node: MapNode = {
       id: file.path,
@@ -144,16 +158,18 @@ export function buildMapDataFromEntries(app: any, entries: any[]): { nodes: MapN
       name,
       x: Number.NaN, // initialize missing; layout will place
       y: Number.NaN,
-      color: (fm as any).color,
-      size: typeof (fm as any).size === 'number' ? (fm as any).size : undefined,
+      color: (fm as any)[colorKey],
+      size: typeof (fm as any)[sizeKey] === 'number' ? (fm as any)[sizeKey] : undefined,
     };
     nodes.push(node);
     idByPath.set(file.path, file.path);
 
-    // distances/pathways: list of links/paths with optional relative distance
-    const pathways: any[] = Array.isArray((fm as any).pathways) ? (fm as any).pathways : [];
-    const distancesList: any[] = Array.isArray((fm as any).distances) ? (fm as any).distances : [];
-    const combined = [...pathways, ...distancesList];
+    // distances: list of links/paths with optional relative distance
+    const combined: any[] = [];
+    for (const key of distancesKeys) {
+      const arr = Array.isArray((fm as any)[key]) ? (fm as any)[key] : [];
+      for (const v of arr) combined.push(v);
+    }
     for (const p of combined) {
       let target: string | undefined;
       let lengthRel: number | undefined;
@@ -187,9 +203,10 @@ export function buildMapDataFromEntries(app: any, entries: any[]): { nodes: MapN
         if (rel != null) lengthRel = rel;
       }
       if (typeof target === 'string') {
-        // Resolve to actual file path if possible
-        const dest = app.metadataCache.getFirstLinkpathDest?.(target, file.path);
-        const toId = dest?.path ?? target;
+        // Resolve to actual file path if possible (configurable)
+        const toId = resolveLinks
+          ? app.metadataCache.getFirstLinkpathDest?.(target, file.path)?.path ?? target
+          : target;
         edges.push({ fromId: file.path, toId, length: lengthRel });
       }
     }
@@ -199,7 +216,7 @@ export function buildMapDataFromEntries(app: any, entries: any[]): { nodes: MapN
 }
 
 export function renderMapSVGFromEntries(app: any, entries: any[], options: MapOptions = {}): SVGSVGElement {
-  const { nodes, edges } = buildMapDataFromEntries(app, entries);
+  const { nodes, edges } = buildMapDataFromEntries(app, entries, options);
   if (nodes.length === 0) return createSvg(options);
   // compute layout using desired relative distances if available
   layoutNodesByDistances(nodes, edges, options);
@@ -225,7 +242,7 @@ function layoutNodesByDistances(nodes: MapNode[], edges: MapEdge[], options: Map
   // Normalize absolute lengths (>1) to relative scale [0..1]
   const rawLens = edges.map((e) => e.length).filter((v): v is number => Number.isFinite(v as number));
   const maxLen = rawLens.length ? Math.max(...rawLens) : 0;
-  if (maxLen > 1) {
+  if (options.normalizeAbsoluteLengths && maxLen > 1) {
     for (const e of edges) {
       if (typeof e.length === 'number') e.length = e.length / maxLen;
     }

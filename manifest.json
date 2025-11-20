@@ -1,8 +1,7 @@
 {
 	"id": "bases-input-view",
 	"name": "Bases Input View",
-  "version": "1.0.18",
-  "version": "1.0.19",
+  "version": "1.0.20",
 	"minAppVersion": "1.10.0",
 	"description": "Adds a simple Bases \"Input view\" that shows files as columns and properties as rows, with editable cells.",
 	"author": "Rai",

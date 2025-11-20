@@ -1,15 +1,18 @@
 import { BasesView } from 'obsidian';
 import { renderMapSVGFromEntries, MapOptions } from './map-visualization';
+import type InputViewPlugin from './main';
 
 export const MAP_VIEW_TYPE = 'relative-map-view';
 
 export class MapBasesView extends BasesView {
   readonly type = MAP_VIEW_TYPE;
   private containerEl: HTMLElement;
+  private plugin: InputViewPlugin;
 
-  constructor(controller: any, parentEl: HTMLElement) {
+  constructor(controller: any, parentEl: HTMLElement, plugin: InputViewPlugin) {
     super(controller);
     this.containerEl = parentEl.createDiv('map-view-container');
+    this.plugin = plugin;
   }
 
   public onOpen(): void {
@@ -38,13 +41,21 @@ export class MapBasesView extends BasesView {
       return;
     }
 
+    const s = this.plugin.settings;
     const mapOptions: MapOptions = {
       width: 1024,
       height: 768,
-      defaultEdgeLengthRel: 0.5,
-      iterations: 400,
-      stiffness: 0.08,
-      damping: 0.85,
+      defaultEdgeLengthRel: s.defaultEdgeLengthRel,
+      iterations: s.iterations,
+      stiffness: s.stiffness,
+      damping: s.damping,
+      distancesKeys: s.distancesKeys,
+      sizeKey: s.sizeKey,
+      colorKey: s.colorKey,
+      typeKey: s.typeKey,
+      nameKey: s.nameKey,
+      resolveLinks: s.resolveLinks,
+      normalizeAbsoluteLengths: s.normalizeAbsoluteLengths,
     };
 
     const svg = renderMapSVGFromEntries(app, entries, mapOptions);

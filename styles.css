@@ -31,3 +31,12 @@ If your plugin does not need CSS, delete this file.
   width: 100%;
   box-sizing: border-box;
 }
+.map-view-container {
+  overflow: auto;
+}
+
+.map-view-svg-wrapper svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}

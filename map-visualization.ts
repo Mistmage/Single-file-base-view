@@ -1,15 +1,12 @@
 // SVG map visualization (inspired by Obsidian Maps)
 // Renders notes as nodes with optional pathways/edges, based on frontmatter.
-// Coordinates are RELATIVE only (no absolute lat/long):
-// - pos: [x, y] where x and y are in [0..1] or percentages [0..100]
-// - x: number, y: number (each in [0..1] or [0..100] as percentage)
-// - coords: "x, y" string (each in [0..1] or [0..100] as percentage)
+// Distance-driven layout only (no absolute positions):
 // Minimal schema:
 // - type: 'world' | 'continent' | 'region' | 'territory' | 'location' | 'pathway'
 // - name: string (optional)
 // - color: string (optional)
 // - size: number | [w, h] (optional)
-// - pathways: [note-link | id] (optional)
+// - distances/pathways: [note-link | id] (optional) with optional length
 // - wiki-links in note content: [[City A#50]] or [[Locations/City A#50]]
 //   where the fragment (e.g., 50) denotes desired relative edge length.
 
@@ -59,34 +56,7 @@ function toRel(n: any): number | null {
   return null; // ignore absolute values
 }
 
-function parseRelativeCoordsFromFrontmatter(fm: any): { rx: number; ry: number } | null {
-  try {
-    if (!fm) return null;
-    if (Array.isArray(fm.pos) && fm.pos.length >= 2) {
-      const rx = toRel(fm.pos[0]);
-      const ry = toRel(fm.pos[1]);
-      if (rx != null && ry != null) return { rx, ry };
-    }
-    if ('x' in fm && 'y' in fm) {
-      const rx = toRel((fm as any).x);
-      const ry = toRel((fm as any).y);
-      if (rx != null && ry != null) return { rx, ry };
-    }
-    if (typeof (fm as any).coords === 'string') {
-      const parts = String((fm as any).coords)
-        .split(',')
-        .map((s: string) => s.trim());
-      if (parts.length >= 2) {
-        const rx = toRel(parts[0]);
-        const ry = toRel(parts[1]);
-        if (rx != null && ry != null) return { rx, ry };
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
+// No position parsing: nodes are placed purely by distance constraints.
 
 function projectRelativePositions(nodes: MapNode[], options: MapOptions) {
   const { width = 800, height = 600, padding = 24 } = options;
@@ -161,24 +131,24 @@ export function buildMapDataFromEntries(app: any, entries: any[]): { nodes: MapN
 
     const type: MapEntityType = (fm.type as MapEntityType) || 'location';
     const name: string | undefined = (fm as any).name || file.basename;
-    const rel = parseRelativeCoordsFromFrontmatter(fm);
-    if (!rel) continue; // skip if we cannot place it
 
     const node: MapNode = {
       id: file.path,
       type,
       name,
-      x: rel.rx, // store relative; projected later
-      y: rel.ry,
+      x: Number.NaN, // initialize missing; layout will place
+      y: Number.NaN,
       color: (fm as any).color,
       size: typeof (fm as any).size === 'number' ? (fm as any).size : undefined,
     };
     nodes.push(node);
     idByPath.set(file.path, file.path);
 
-    // pathways: list of links/paths with optional relative distance
+    // distances/pathways: list of links/paths with optional relative distance
     const pathways: any[] = Array.isArray((fm as any).pathways) ? (fm as any).pathways : [];
-    for (const p of pathways) {
+    const distancesList: any[] = Array.isArray((fm as any).distances) ? (fm as any).distances : [];
+    const combined = [...pathways, ...distancesList];
+    for (const p of combined) {
       let target: string | undefined;
       let lengthRel: number | undefined;
       if (typeof p === 'string') {
@@ -244,6 +214,15 @@ function layoutNodesByDistances(nodes: MapNode[], edges: MapEdge[], options: Map
     stiffness = 0.5,
     damping = 0.85,
   } = options;
+
+  // Normalize absolute lengths (>1) to relative scale [0..1]
+  const rawLens = edges.map((e) => e.length).filter((v): v is number => Number.isFinite(v as number));
+  const maxLen = rawLens.length ? Math.max(...rawLens) : 0;
+  if (maxLen > 1) {
+    for (const e of edges) {
+      if (typeof e.length === 'number') e.length = e.length / maxLen;
+    }
+  }
 
   // Initialize: if any node lacks coordinates, place on circle
   const missing = nodes.some((nd) => !(Number.isFinite(nd.x) && Number.isFinite(nd.y)));
